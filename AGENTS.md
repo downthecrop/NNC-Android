@@ -49,6 +49,23 @@ EXPO_PUBLIC_API_URL=http://10.0.2.2:4170 npm run android
 # EXPO_PUBLIC_API_URL=http://YOUR_IP_ADDRESS:4170 npm run android
 ```
 
+Start the Metro dev server (required for the dev client):
+
+```bash
+# Emulator
+EXPO_PUBLIC_API_URL=http://10.0.2.2:4170 npx expo start --dev-client
+
+# Physical device
+# EXPO_PUBLIC_API_URL=http://YOUR_IP_ADDRESS:4170 npx expo start --dev-client
+```
+
+## Debugging Notes (Session Learnings)
+
+1. **Metro 500 errors**
+   - If you see `development server returned response error code: 500`, Metro is usually missing a native module.
+   - Ensure `react-native-gesture-handler` is installed: `npm install react-native-gesture-handler`.
+   - Ensure `clients/android/app/_layout.tsx` imports `react-native-gesture-handler` at the top and wraps the app in `GestureHandlerRootView`.
+
 ## Troubleshooting
 
 ### Common Issues

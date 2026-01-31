@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -11,6 +11,9 @@ import {
   View,
 } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { FontAwesomeIcon } from '@fortawesome/react-native-fontawesome';
+import { faCompactDisc } from '@fortawesome/free-solid-svg-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { buildUrl } from '@/lib/apiClient';
@@ -29,6 +32,7 @@ function formatTime(valueMs: number) {
 export default function PlayerModal() {
   const colorScheme = useColorScheme();
   const palette = Colors[colorScheme ?? 'light'];
+  const insets = useSafeAreaInsets();
   const {
     queue,
     current,
@@ -49,15 +53,28 @@ export default function PlayerModal() {
   } = usePlayer();
   const screen = Dimensions.get('window');
   const [progressWidth, setProgressWidth] = useState(0);
+  const [albumArtOk, setAlbumArtOk] = useState(true);
+  const fallbackDurationMs =
+    current?.duration && Number.isFinite(current.duration) ? Math.round(current.duration * 1000) : 0;
+  const effectiveDurationMs = durationMs || fallbackDurationMs;
+  const albumArtParams =
+    current?.rootId && (current.albumKey || current.album || current.artist)
+      ? {
+          root: current.rootId,
+          key: current.albumKey || undefined,
+          album: current.albumKey ? undefined : current.album || undefined,
+          artist: current.albumKey ? undefined : current.artist || undefined,
+        }
+      : null;
+  const albumArtUrl = albumArtParams ? buildUrl('/api/album-art', albumArtParams) : null;
+
+  useEffect(() => {
+    setAlbumArtOk(true);
+  }, [albumArtUrl]);
 
   if (!current) {
     return null;
   }
-
-  const albumArtUrl =
-    current.albumKey && current.rootId
-      ? buildUrl('/api/album-art', { root: current.rootId, key: current.albumKey })
-      : null;
 
   return (
     <Modal
@@ -69,7 +86,12 @@ export default function PlayerModal() {
         setPlayerOpen(false);
       }}
     >
-      <View style={styles.backdrop}>
+      <View
+        style={[
+          styles.backdrop,
+          { paddingTop: Math.max(insets.top, 16), paddingBottom: Math.max(insets.bottom, 32) },
+        ]}
+      >
         <View style={styles.topRow}>
           <Pressable
             style={styles.topButton}
@@ -86,10 +108,11 @@ export default function PlayerModal() {
           </Pressable>
         </View>
         <View style={styles.artWrap}>
-          {albumArtUrl ? (
+          {albumArtUrl && albumArtOk ? (
             <Image
               source={{ uri: albumArtUrl, headers: authHeaders }}
               style={[styles.art, { width: screen.width * 0.72, height: screen.width * 0.72 }]}
+              onError={() => setAlbumArtOk(false)}
             />
           ) : (
             <View
@@ -99,7 +122,7 @@ export default function PlayerModal() {
                 { width: screen.width * 0.72, height: screen.width * 0.72 },
               ]}
             >
-              <FontAwesome name="music" size={48} color="#3B82F6" />
+              <FontAwesomeIcon icon={faCompactDisc} size={56} color="#9AA3B2" />
             </View>
           )}
         </View>
@@ -116,38 +139,40 @@ export default function PlayerModal() {
             style={styles.progressTrack}
             onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
             onPress={(event) => {
-              if (!durationMs || !progressWidth) {
+              if (!effectiveDurationMs || !progressWidth) {
                 return;
               }
               const ratio = Math.max(
                 0,
                 Math.min(1, event.nativeEvent.locationX / progressWidth)
               );
-              seekTo(ratio * durationMs);
+              seekTo(ratio * effectiveDurationMs);
             }}
             onPressIn={(event) => {
-              if (!durationMs || !progressWidth) {
+              if (!effectiveDurationMs || !progressWidth) {
                 return;
               }
               const ratio = Math.max(
                 0,
                 Math.min(1, event.nativeEvent.locationX / progressWidth)
               );
-              seekTo(ratio * durationMs);
+              seekTo(ratio * effectiveDurationMs);
             }}
           >
             <View
               style={[
                 styles.progressFill,
                 {
-                  width: durationMs ? `${Math.min(100, (positionMs / durationMs) * 100)}%` : '0%',
+                  width: effectiveDurationMs
+                    ? `${Math.min(100, (positionMs / effectiveDurationMs) * 100)}%`
+                    : '0%',
                 },
               ]}
             />
           </Pressable>
           <View style={styles.progressMeta}>
             <Text style={styles.progressLabel}>{formatTime(positionMs)}</Text>
-            <Text style={styles.progressLabel}>{formatTime(durationMs)}</Text>
+            <Text style={styles.progressLabel}>{formatTime(effectiveDurationMs)}</Text>
           </View>
         </View>
         <View style={styles.controls}>

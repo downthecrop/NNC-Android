@@ -4,12 +4,12 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -34,6 +34,7 @@ type Entry = {
   title?: string | null;
   artist?: string | null;
   album?: string | null;
+  duration?: number | null;
   albumKey?: string | null;
 };
 
@@ -49,21 +50,28 @@ export default function FilesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Entry[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchHasMore, setSearchHasMore] = useState(true);
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [imageIndex, setImageIndex] = useState<number | null>(null);
+  const [mediaIndex, setMediaIndex] = useState<number | null>(null);
   const cardBackground = colorScheme === 'dark' ? '#171A20' : '#FFFFFF';
   const chipBackground = colorScheme === 'dark' ? '#1F232B' : '#E9EDF5';
   const metaColor = colorScheme === 'dark' ? '#9AA3B2' : '#7D8390';
   const inputBackground = colorScheme === 'dark' ? '#12161C' : '#FFFFFF';
   const inputBorder = colorScheme === 'dark' ? '#252A33' : '#E3E7EF';
+  const isSearchMode = Boolean(searchQuery.trim());
   const listItems = useMemo(
-    () => (searchQuery.trim() ? searchResults : items),
-    [searchQuery, searchResults, items]
+    () => (isSearchMode ? searchResults : items),
+    [isSearchMode, searchResults, items]
   );
-  const imageItems = useMemo(
-    () => listItems.filter((entry) => entry.mime?.startsWith('image/')),
+  const mediaItems = useMemo(
+    () =>
+      listItems.filter(
+        (entry) => entry.mime?.startsWith('image/') || entry.mime?.startsWith('video/')
+      ),
     [listItems]
   );
   const audioItems = useMemo(
@@ -111,6 +119,62 @@ export default function FilesScreen() {
     loadList();
   }, [activeRoot?.id, path]);
 
+  const resetSearch = () => {
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchOffset(0);
+    setSearchHasMore(true);
+    setSearchLoadingMore(false);
+    setSearching(false);
+  };
+
+  const runSearch = async ({ reset = true } = {}) => {
+    if (!activeRoot) {
+      return;
+    }
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResults([]);
+      setSearchOffset(0);
+      setSearchHasMore(true);
+      setSearchLoadingMore(false);
+      setSearching(false);
+      return;
+    }
+    if (reset) {
+      setSearching(true);
+      setSearchOffset(0);
+      setSearchHasMore(true);
+    } else {
+      setSearchLoadingMore(true);
+    }
+    setError('');
+    const pageOffset = reset ? 0 : searchOffset;
+    const url = buildUrl('/api/search', {
+      root: activeRoot.id,
+      q: query,
+      type: 'all',
+      limit: PAGE_LIMIT,
+      offset: pageOffset,
+      includeTotal: false,
+    });
+    const result = await apiJson(url);
+    if (result.ok) {
+      const newItems = Array.isArray(result.data?.items) ? result.data.items : [];
+      setSearchResults((prev) => (reset ? newItems : [...prev, ...newItems]));
+      setSearchOffset(pageOffset + newItems.length);
+      setSearchHasMore(newItems.length === PAGE_LIMIT);
+      setError('');
+    } else {
+      setSearchResults([]);
+      setSearchOffset(0);
+      setSearchHasMore(false);
+      setError(result.error?.message || 'Failed to search');
+    }
+    setSearching(false);
+    setSearchLoadingMore(false);
+  };
+
   useEffect(() => {
     if (!activeRoot) {
       return;
@@ -118,31 +182,14 @@ export default function FilesScreen() {
     const query = searchQuery.trim();
     if (!query) {
       setSearchResults([]);
+      setSearchOffset(0);
+      setSearchHasMore(true);
+      setSearchLoadingMore(false);
       setSearching(false);
       return;
     }
-    setSearching(true);
-    const handle = setTimeout(async () => {
-      const url = buildUrl('/api/search', {
-        root: activeRoot.id,
-        q: query,
-        type: 'all',
-        pathPrefix: path || undefined,
-        limit: PAGE_LIMIT,
-        includeTotal: false,
-      });
-      const result = await apiJson(url);
-      if (result.ok) {
-        setSearchResults(Array.isArray(result.data?.items) ? result.data.items : []);
-        setError('');
-      } else {
-        setSearchResults([]);
-        setError(result.error?.message || 'Failed to search');
-      }
-      setSearching(false);
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [searchQuery, activeRoot?.id, path]);
+    runSearch({ reset: true });
+  }, [searchQuery, activeRoot?.id]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -158,8 +205,7 @@ export default function FilesScreen() {
     setRootId(id);
     setPath('');
     setItems([]);
-    setSearchQuery('');
-    setSearchResults([]);
+    resetSearch();
   };
 
   const goUp = () => {
@@ -169,6 +215,7 @@ export default function FilesScreen() {
     const parts = path.split('/');
     parts.pop();
     setPath(parts.join('/'));
+    resetSearch();
   };
 
   const iconFor = (entry: Entry) => {
@@ -193,11 +240,12 @@ export default function FilesScreen() {
       onPress={() => {
         if (item.isDir) {
           setPath(item.path);
-        } else if (item.mime?.startsWith('image/')) {
-          const index = imageItems.findIndex(
+          resetSearch();
+        } else if (item.mime?.startsWith('image/') || item.mime?.startsWith('video/')) {
+          const index = mediaItems.findIndex(
             (entry) => entry.rootId === item.rootId && entry.path === item.path
           );
-          setImageIndex(index >= 0 ? index : 0);
+          setMediaIndex(index >= 0 ? index : 0);
         } else if (item.mime?.startsWith('audio/')) {
           playTrack(item, audioItems.length ? audioItems : undefined);
           setPlayerOpen(true);
@@ -233,6 +281,13 @@ export default function FilesScreen() {
       ? 'Searching...'
       : 'No matches found.'
     : 'No files found in this folder.';
+
+  const loadMoreSearch = async () => {
+    if (!searchHasMore || searchLoadingMore || searching || !isSearchMode) {
+      return;
+    }
+    await runSearch({ reset: false });
+  };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.background }]}>
@@ -299,16 +354,18 @@ export default function FilesScreen() {
           renderItem={renderItem}
           contentContainerStyle={listItems.length ? styles.list : styles.listEmpty}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+          onEndReached={isSearchMode ? loadMoreSearch : undefined}
+          onEndReachedThreshold={isSearchMode ? 0.4 : undefined}
           ListEmptyComponent={
             <Text style={styles.emptyText}>{emptyLabel}</Text>
           }
         />
       )}
       <PhotoViewerModal
-        visible={imageIndex !== null}
-        items={imageItems}
-        activeIndex={imageIndex ?? 0}
-        onClose={() => setImageIndex(null)}
+        visible={mediaIndex !== null}
+        items={mediaItems}
+        activeIndex={mediaIndex ?? 0}
+        onClose={() => setMediaIndex(null)}
         authHeaders={authHeaders}
       />
       <MiniPlayer />

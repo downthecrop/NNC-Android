@@ -5,12 +5,12 @@ import {
   Image,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { buildUrl, useApi } from '@/lib/api';
@@ -33,8 +33,14 @@ export default function PhotosScreen() {
   const { apiJson, authHeaders } = useApi();
   const { roots, refresh } = useServer();
   const [items, setItems] = useState<Entry[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Entry[]>([]);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchHasMore, setSearchHasMore] = useState(true);
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false);
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,31 +54,47 @@ export default function PhotosScreen() {
     return roots.length > 1 ? '__all__' : roots[0].id;
   }, [roots]);
 
-  const loadPhotos = async () => {
+  const loadPhotos = async ({ reset = true } = {}) => {
     if (!rootId) {
       return;
     }
-    setLoading(true);
+    if (reset) {
+      setLoading(true);
+      setOffset(0);
+      setHasMore(true);
+    } else {
+      setLoadingMore(true);
+    }
     setError('');
+    const pageOffset = reset ? 0 : offset;
     const url = buildUrl('/api/media', {
       root: rootId,
       type: 'photos',
       limit: PAGE_LIMIT,
-      includeTotal: false,
+      offset: pageOffset,
     });
     const result = await apiJson(url);
     if (!result.ok) {
       setError(result.error?.message || 'Failed to load photos');
-      setItems([]);
+      if (reset) {
+        setItems([]);
+        setOffset(0);
+        setHasMore(false);
+      }
       setLoading(false);
+      setLoadingMore(false);
       return;
     }
-    setItems(Array.isArray(result.data?.items) ? result.data.items : []);
+    const newItems = Array.isArray(result.data?.items) ? result.data.items : [];
+    setItems((prev) => (reset ? newItems : [...prev, ...newItems]));
+    setOffset(pageOffset + newItems.length);
+    setHasMore(newItems.length === PAGE_LIMIT);
     setLoading(false);
+    setLoadingMore(false);
   };
 
   useEffect(() => {
-    loadPhotos();
+    loadPhotos({ reset: true });
   }, [rootId]);
 
   useEffect(() => {
@@ -82,21 +104,27 @@ export default function PhotosScreen() {
     const query = searchQuery.trim();
     if (!query) {
       setSearchResults([]);
+      setSearchOffset(0);
+      setSearchHasMore(true);
       setSearching(false);
       return;
     }
     setSearching(true);
     const handle = setTimeout(async () => {
+      setSearchOffset(0);
+      setSearchHasMore(true);
       const url = buildUrl('/api/search', {
         root: rootId,
         q: query,
         type: 'photos',
         limit: PAGE_LIMIT,
-        includeTotal: false,
       });
       const result = await apiJson(url);
       if (result.ok) {
-        setSearchResults(Array.isArray(result.data?.items) ? result.data.items : []);
+        const newItems = Array.isArray(result.data?.items) ? result.data.items : [];
+        setSearchResults(newItems);
+        setSearchOffset(newItems.length);
+        setSearchHasMore(newItems.length === PAGE_LIMIT);
         setError('');
       } else {
         setSearchResults([]);
@@ -107,10 +135,46 @@ export default function PhotosScreen() {
     return () => clearTimeout(handle);
   }, [searchQuery, rootId]);
 
+  const loadMorePhotos = async () => {
+    if (loading || loadingMore || !hasMore || searchQuery.trim()) {
+      return;
+    }
+    await loadPhotos({ reset: false });
+  };
+
+  const loadMoreSearch = async () => {
+    if (
+      searching ||
+      searchLoadingMore ||
+      !searchHasMore ||
+      !searchQuery.trim() ||
+      !rootId
+    ) {
+      return;
+    }
+    setSearchLoadingMore(true);
+    const pageOffset = searchOffset;
+    const url = buildUrl('/api/search', {
+      root: rootId,
+      q: searchQuery.trim(),
+      type: 'photos',
+      limit: PAGE_LIMIT,
+      offset: pageOffset,
+    });
+    const result = await apiJson(url);
+    if (result.ok) {
+      const newItems = Array.isArray(result.data?.items) ? result.data.items : [];
+      setSearchResults((prev) => [...prev, ...newItems]);
+      setSearchOffset(pageOffset + newItems.length);
+      setSearchHasMore(newItems.length === PAGE_LIMIT);
+    }
+    setSearchLoadingMore(false);
+  };
+
   const handleRefresh = async () => {
     setRefreshing(true);
     await refresh();
-    await loadPhotos();
+    await loadPhotos({ reset: true });
     setRefreshing(false);
   };
 
@@ -129,7 +193,8 @@ export default function PhotosScreen() {
     );
   }
 
-  const listItems = searchQuery.trim() ? searchResults : items;
+  const isSearchMode = Boolean(searchQuery.trim());
+  const listItems = isSearchMode ? searchResults : items;
   const emptyLabel = searchQuery.trim()
     ? searching
       ? 'Searching...'
@@ -166,12 +231,21 @@ export default function PhotosScreen() {
         </View>
       ) : (
         <FlatList
+          key="photos-grid-3"
           data={listItems}
           keyExtractor={(item) => `${item.rootId}:${item.path}`}
           numColumns={3}
           columnWrapperStyle={styles.column}
           contentContainerStyle={listItems.length ? styles.grid : styles.gridEmpty}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+          onEndReached={() => {
+            if (isSearchMode) {
+              loadMoreSearch();
+            } else {
+              loadMorePhotos();
+            }
+          }}
+          onEndReachedThreshold={0.4}
           renderItem={({ item }) => (
             <Pressable
               style={[styles.tile, { backgroundColor: cardBackground }]}
