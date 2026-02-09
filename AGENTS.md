@@ -65,6 +65,10 @@ EXPO_PUBLIC_API_URL=http://10.0.2.2:4170 npx expo start --dev-client
    - If you see `development server returned response error code: 500`, Metro is usually missing a native module.
    - Ensure `react-native-gesture-handler` is installed: `npm install react-native-gesture-handler`.
    - Ensure `clients/android/app/_layout.tsx` imports `react-native-gesture-handler` at the top and wraps the app in `GestureHandlerRootView`.
+2. **Instant app close with Metro websocket errors**
+   - If logcat shows repeated `ReactNativeJNI ... Failed to connect to /10.0.2.2:8081`, this is Metro connectivity failure, not a native crash.
+   - Run Metro in a separate terminal and keep it running: `EXPO_PUBLIC_API_URL=http://10.0.2.2:4170 npx expo start --dev-client --clear`.
+   - Then relaunch the app: `adb shell monkey -p com.brycematthes.android 1` (or rerun `npm run android`).
 
 ## Troubleshooting
 
